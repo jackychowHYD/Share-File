@@ -1,132 +1,192 @@
+import streamlit as st
+import boto3
+from botocore.config import Config
 import os
-import streamlit as st
-import boto3
 
-# ==================== 雲端物件儲存 (S3 / R2) 設定 ====================
-import streamlit as st
-import boto3
+# ==========================================
+# 1. 頁面配置與標題
+# ==========================================
+st.set_page_config(
+    page_title="雲端報告管理平台",
+    page_icon="📂",
+    layout="wide"
+)
 
-# 自動判斷是本地執行還是雲端執行
+# ==========================================
+# 2. 密碼驗證邏輯 (Authentication System)
+# ==========================================
+def check_password():
+    """Returns `True` if the user had a correct password."""
+
+    # 取得設定的密碼 (優先從 Secrets 讀取，沒有的話預設為 "admin123")
+    try:
+        correct_password = st.secrets["APP_PASSWORD"]
+    except Exception:
+        correct_password = "admin123"
+
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if st.session_state["password"] == correct_password:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # 驗證成功後清空暫存密碼，確保安全
+        else:
+            st.session_state["password_correct"] = False
+
+    # 已經登入成功過
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # 顯示登入介面
+    st.markdown("## 🔒 系統防護：請先登入")
+    st.text_input(
+        "請輸入系統存取密碼", type="password", on_change=password_entered, key="password"
+    )
+    
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("❌ 密碼不正確，請重新輸入。")
+        
+    return False
+
+# 如果密碼驗證沒有通過，就停止執行後續程式碼
+if not check_password():
+    st.stop()
+
+# ==========================================
+# 登入成功後才會執行的主程式區域
+# ==========================================
+
+# 側邊欄加入登出按鈕
+with st.sidebar:
+    st.write("👤 已驗證權限")
+    if st.button("🚪 登出系統"):
+        st.session_state["password_correct"] = False
+        st.rerun()
+
+st.title("📂 雲端報告管理平台")
+st.write("支援 Inspection Report、Audit Report、Test Report 與 Others 分類管理。")
+
+# ==========================================
+# 3. 讀取 Cloudflare R2 安全金鑰與設定
+# ==========================================
 try:
-    # 嘗試從 Streamlit Cloud 的 Secrets 讀取
     AWS_ACCESS_KEY_ID = st.secrets["AWS_ACCESS_KEY_ID"]
     AWS_SECRET_ACCESS_KEY = st.secrets["AWS_SECRET_ACCESS_KEY"]
     BUCKET_NAME = st.secrets["BUCKET_NAME"]
     ENDPOINT_URL = st.secrets["ENDPOINT_URL"]
-    AWS_REGION = "auto"
 except Exception:
-    # 如果在本地沒有設定 st.secrets，則直接寫死在這邊方便本地測試
-    AWS_ACCESS_KEY_ID = "93f1518eaabd36d90c660f68c15f17b3"
-    AWS_SECRET_ACCESS_KEY = "18001ef32838fc1dc5b7d9a53e80c35d1fae03d590fe3eb188ea8a59fafaf5f4"
-    BUCKET_NAME = "success-way"
-    ENDPOINT_URL = "https://0fc5d82eb0dcef6539298f2c3221edea.r2.cloudflarestorage.com"
-    AWS_REGION = "auto"
+    AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "YOUR_ACCESS_KEY")
+    AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "YOUR_SECRET_KEY")
+    BUCKET_NAME = os.environ.get("BUCKET_NAME", "success-way")
+    ENDPOINT_URL = os.environ.get("ENDPOINT_URL", "https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com")
 
-# 建立連接 Cloudflare R2 的客戶端
-s3_client = boto3.client(
-    's3',
-    endpoint_url=ENDPOINT_URL,
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-    region_name=AWS_REGION
-)
+ENDPOINT_URL = ENDPOINT_URL.rstrip("/")
 
-# 初始化 S3 / R2 Client
+# ==========================================
+# 4. 初始化 Cloudflare R2 客戶端
+# ==========================================
 @st.cache_resource
-def init_s3_client():
+def get_r2_client():
+    r2_config = Config(
+        region_name="auto",
+        signature_version="s3v4",
+        s3={"addressing_style": "virtual"}
+    )
     return boto3.client(
-        's3',
+        "s3",
+        endpoint_url=ENDPOINT_URL,
         aws_access_key_id=AWS_ACCESS_KEY_ID,
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=AWS_REGION,
-        endpoint_url=ENDPOINT_URL
+        config=r2_config
     )
 
-s3 = init_s3_client()
-# ====================================================================
+try:
+    s3_client = get_r2_client()
+except Exception as e:
+    st.error(f"連線至 R2 儲存桶失敗: {e}")
+    st.stop()
 
-# 更新後的 4 種報告分類
-REPORT_CATEGORIES = ["Inspection Report", "Audit Report", "Test Report", "Others"]
+CATEGORIES = ["Inspection Report", "Audit Report", "Test Report", "Others"]
 
-PLATFORM_PASSWORD = "my_secure_password123"
-FORBIDDEN_EXTENSIONS = (".exe", ".bat", ".php")
+# ==========================================
+# 5. 分頁標籤 (Tabs) 設定
+# ==========================================
+tab_upload, tab_view = st.tabs(["📤 上傳檔案", "📁 瀏覽與下載報告"])
 
-st.set_page_config(page_title="專業雲端報告管理平台", page_icon="📊", layout="centered")
-
-st.title("📊 專業雲端報告管理平台")
-st.write("安全管理您的四大類報告，檔案直接存放於 Cloudflare R2 雲端硬碟。")
-
-# 1. 密碼驗證
-password = st.text_input("請輸入平台存取密碼", type="password")
-
-if not password:
-    st.info("請先輸入密碼以解鎖平台功能。")
-elif password != PLATFORM_PASSWORD:
-    st.error("❌ 密碼錯誤，請重新輸入！")
-else:
-    st.success("✅ 密碼正確，歡迎使用！")
-    st.divider()
+# ------------------------------------------
+# TAB 1: 檔案上傳
+# ------------------------------------------
+with tab_upload:
+    st.header("上傳報告檔案")
+    selected_category = st.selectbox("請選擇報告分類：", CATEGORIES)
+    uploaded_file = st.file_uploader("選擇要上傳的 PDF 檔案", type=["pdf"])
     
-    # 2. 檔案上傳區塊
-    st.subheader("📤 上傳新報告至雲端")
-    selected_category = st.selectbox("選擇報告類型 (Category)", REPORT_CATEGORIES)
-    
-    uploaded_file = st.file_uploader("選擇報告檔案 (建議 PDF 或文件格式)", type=["pdf", "docx", "xlsx", "zip", "txt"])
-    
-    if uploaded_file is not None:
-        filename = uploaded_file.name
-        
-        if filename.lower().endswith(FORBIDDEN_EXTENSIONS):
-            st.error(f"❌ 為了安全起見，不允許上傳此格式：{filename}")
+    if st.button("開始上傳", type="primary"):
+        if uploaded_file is not None:
+            file_key = f"{selected_category}/{uploaded_file.name}"
+            with st.spinner("檔案上傳中，請稍候..."):
+                try:
+                    s3_client.upload_fileobj(
+                        uploaded_file,
+                        BUCKET_NAME,
+                        file_key,
+                        ExtraArgs={"ContentType": "application/pdf"}
+                    )
+                    st.success(f"✅ 成功上傳檔案 [{uploaded_file.name}] 到分類 [{selected_category}]！")
+                except Exception as e:
+                    st.error(f"❌ 上傳失敗: {e}")
         else:
-            # 雲端儲存路徑 (Key)
-            file_key = f"{selected_category}/{filename}"
-            
-            try:
-                with st.spinner("正在上傳至雲端物件儲存..."):
-                    s3.upload_fileobj(uploaded_file, BUCKET_NAME, file_key)
-                st.success(f"🎉 成功上傳 [{selected_category}] 類別報告至雲端：{filename}")
-            except Exception as e:
-                st.error(f"❌ 上傳失敗: {e}")
+            st.warning("請先選擇要上傳的檔案！")
+
+# ------------------------------------------
+# TAB 2: 檔案瀏覽與預覽/下載
+# ------------------------------------------
+with tab_view:
+    st.header("瀏覽與下載已儲存的報告")
+    view_category = st.selectbox("篩選分類：", CATEGORIES, key="view_cat")
+    prefix_path = f"{view_category}/"
     
-    st.divider()
-    
-    # 3. 雲端報告清單與下載區塊
-    st.subheader("📥 雲端報告清單與下載")
-    
-    tabs = st.tabs(REPORT_CATEGORIES)
-    
-    for i, category in enumerate(REPORT_CATEGORIES):
-        with tabs[i]:
-            try:
-                response = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix=f"{category}/")
+    try:
+        response = s3_client.list_objects_v2(
+            Bucket=BUCKET_NAME,
+            Prefix=prefix_path
+        )
+        objects = response.get("Contents", [])
+        files = [obj for obj in objects if obj["Key"] != prefix_path]
+        
+        if not files:
+            st.info(f"分類 [{view_category}] 中目前沒有任何檔案。")
+        else:
+            st.write(f"目前包含 **{len(files)}** 個檔案：")
+            for file_info in files:
+                full_key = file_info["Key"]
+                filename = full_key.replace(prefix_path, "")
+                file_size_mb = round(file_info["Size"] / (1024 * 1024), 2)
                 
-                if "Contents" not in response:
-                    st.info(f"目前雲端尚無 {category} 類別的報告。")
-                else:
-                    files = [obj['Key'] for obj in response['Contents'] if obj['Key'] != f"{category}/"]
-                    
-                    if not files:
-                        st.info(f"目前雲端尚無 {category} 類別的報告。")
-                    else:
-                        for file_key in files:
-                            file_name = file_key.split("/")[-1]
-                            
-                            col1, col2 = st.columns([3, 1])
-                            with col1:
-                                st.text(file_name)
-                            with col2:
-                                if st.button("下載", key=file_key):
-                                    try:
-                                        file_obj = s3.get_object(Bucket=BUCKET_NAME, Key=file_key)
-                                        file_data = file_obj['Body'].read()
-                                        st.download_button(
-                                            label=f"確認下載 {file_name}",
-                                            data=file_data,
-                                            file_name=file_name,
-                                            key=f"dl_{file_key}"
-                                        )
-                                    except Exception as e:
-                                        st.error(f"下載失敗: {e}")
-            except Exception as e:
-                st.error(f"無法讀取雲端檔案列表: {e}")
+                col1, col2, col3 = st.columns([3, 1, 1])
+                
+                with col1:
+                    st.markdown(f"📄 **{filename}** `({file_size_mb} MB)`")
+                
+                with col2:
+                    try:
+                        presigned_url = s3_client.generate_presigned_url(
+                            'get_object',
+                            Params={'Bucket': BUCKET_NAME, 'Key': full_key},
+                            ExpiresIn=3600
+                        )
+                        st.markdown(f"[🔗 點擊開啓/預覽]({presigned_url})")
+                    except Exception as e:
+                        st.write("無法產生預覽連結")
+
+                with col3:
+                    if st.button("🗑️ 刪除", key=f"del_{full_key}"):
+                        try:
+                            s3_client.delete_object(Bucket=BUCKET_NAME, Key=full_key)
+                            st.success(f"已刪除 {filename}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"刪除失敗: {e}")
+                st.divider()
+
+    except Exception as e:
+        st.error(f"無法讀取儲存桶資料: {e}")
