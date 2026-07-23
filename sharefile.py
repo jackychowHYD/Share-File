@@ -139,7 +139,7 @@ with tab_upload:
             st.warning("請先選擇要上傳的檔案！")
 
 # ------------------------------------------
-# TAB 2: 瀏覽與下載
+# TAB 2: 檔案瀏覽與預覽/下載
 # ------------------------------------------
 with tab_view:
     st.header("瀏覽與下載已儲存的報告")
@@ -163,23 +163,30 @@ with tab_view:
                 filename = full_key.replace(prefix_path, "")
                 file_size_mb = round(file_info["Size"] / (1024 * 1024), 2)
                 
-                col1, col2, col3 = st.columns([3, 1, 1])
+                col1, col2, col3 = st.columns([3, 1.5, 1])
                 
                 with col1:
                     st.markdown(f"📄 **{filename}** `({file_size_mb} MB)`")
                 
                 with col2:
+                    # 💡 方式 A：安全直接下載按鈕 (最穩定)
                     try:
-                        presigned_url = s3_client.generate_presigned_url(
-                            'get_object',
-                            Params={'Bucket': BUCKET_NAME, 'Key': full_key},
-                            ExpiresIn=3600
+                        # 從 R2 讀取檔案內容
+                        file_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=full_key)
+                        file_data = file_obj['Body'].read()
+                        
+                        st.download_button(
+                            label="📥 下載 PDF",
+                            data=file_data,
+                            file_name=filename,
+                            mime="application/pdf",
+                            key=f"dl_{full_key}"
                         )
-                        st.markdown(f"[🔗 點擊開啓/預覽]({presigned_url})")
                     except Exception as e:
-                        st.write("無法產生預覽連結")
+                        st.error("讀取失敗")
 
                 with col3:
+                    # 刪除按鈕
                     if st.button("🗑️ 刪除", key=f"del_{full_key}"):
                         try:
                             s3_client.delete_object(Bucket=BUCKET_NAME, Key=full_key)
@@ -187,6 +194,7 @@ with tab_view:
                             st.rerun()
                         except Exception as e:
                             st.error(f"刪除失敗: {e}")
+                            
                 st.divider()
 
     except Exception as e:
