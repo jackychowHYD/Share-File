@@ -143,6 +143,7 @@ with tab_upload:
 # ------------------------------------------
 with tab_view:
     st.header("瀏覽與下載已儲存的報告")
+    
     view_category = st.selectbox("篩選分類：", CATEGORIES, key="view_cat")
     prefix_path = f"{view_category}/"
     
@@ -169,24 +170,28 @@ with tab_view:
                     st.markdown(f"📄 **{filename}** `({file_size_mb} MB)`")
                 
                 with col2:
-                    # 💡 方式 A：安全直接下載按鈕 (最穩定)
                     try:
-                        # 從 R2 讀取檔案內容
-                        file_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=full_key)
-                        file_data = file_obj['Body'].read()
-                        
-                        st.download_button(
-                            label="📥 下載 PDF",
-                            data=file_data,
-                            file_name=filename,
-                            mime="application/pdf",
-                            key=f"dl_{full_key}"
+                        # 產生 1 小時內有效的安全開啟/下載網址
+                        presigned_url = s3_client.generate_presigned_url(
+                            'get_object',
+                            Params={
+                                'Bucket': BUCKET_NAME, 
+                                'Key': full_key,
+                                'ResponseContentType': 'application/pdf'  # 強制開啟為 PDF
+                            },
+                            ExpiresIn=3600
                         )
-                    except Exception as e:
-                        st.error("讀取失敗")
+                        # 使用 HTML 建立一個漂亮的開啟/下載按鈕
+                        st.markdown(
+                            f'<a href="{presigned_url}" target="_blank" style="text-decoration:none;">'
+                            f'<button style="background-color:#4CAF50; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer;">'
+                            f'📥 下載 / 檢視 PDF</button></a>', 
+                            unsafe_allow_html=True
+                        )
+                    except Exception as err:
+                        st.error(f"連結產生失敗: {err}")
 
                 with col3:
-                    # 刪除按鈕
                     if st.button("🗑️ 刪除", key=f"del_{full_key}"):
                         try:
                             s3_client.delete_object(Bucket=BUCKET_NAME, Key=full_key)
