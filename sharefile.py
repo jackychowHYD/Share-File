@@ -22,6 +22,15 @@ except Exception:
     ENDPOINT_URL = "https://0fc5d82eb0dcef6539298f2c3221edea.r2.cloudflarestorage.com"
     AWS_REGION = "auto"
 
+# 建立連接 Cloudflare R2 的客戶端
+s3_client = boto3.client(
+    's3',
+    endpoint_url=ENDPOINT_URL,
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    region_name=AWS_REGION
+)
+
 # 初始化 S3 / R2 Client
 @st.cache_resource
 def init_s3_client():
