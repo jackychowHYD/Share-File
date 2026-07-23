@@ -1,10 +1,14 @@
 import streamlit as st
 import boto3
 from botocore.config import Config
+import urllib3
 import os
 
+# 關閉 SSL 驗證警告訊息
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # ==========================================
-# 1. 頁面配置與標題
+# 1. 頁面配置
 # ==========================================
 st.set_page_config(
     page_title="雲端報告管理平台",
@@ -13,30 +17,24 @@ st.set_page_config(
 )
 
 # ==========================================
-# 2. 密碼驗證邏輯 (Authentication System)
+# 2. 密碼驗證系統
 # ==========================================
 def check_password():
-    """Returns `True` if the user had a correct password."""
-
-    # 取得設定的密碼 (優先從 Secrets 讀取，沒有的話預設為 "admin123")
     try:
         correct_password = st.secrets["APP_PASSWORD"]
     except Exception:
         correct_password = "admin123"
 
     def password_entered():
-        """Checks whether a password entered by the user is correct."""
         if st.session_state["password"] == correct_password:
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # 驗證成功後清空暫存密碼，確保安全
+            del st.session_state["password"]
         else:
             st.session_state["password_correct"] = False
 
-    # 已經登入成功過
     if st.session_state.get("password_correct", False):
         return True
 
-    # 顯示登入介面
     st.markdown("## 🔒 系統防護：請先登入")
     st.text_input(
         "請輸入系統存取密碼", type="password", on_change=password_entered, key="password"
@@ -47,15 +45,10 @@ def check_password():
         
     return False
 
-# 如果密碼驗證沒有通過，就停止執行後續程式碼
 if not check_password():
     st.stop()
 
-# ==========================================
-# 登入成功後才會執行的主程式區域
-# ==========================================
-
-# 側邊欄加入登出按鈕
+# 側邊欄登出按鈕
 with st.sidebar:
     st.write("👤 已驗證權限")
     if st.button("🚪 登出系統"):
@@ -66,37 +59,45 @@ st.title("📂 雲端報告管理平台")
 st.write("支援 Inspection Report、Audit Report、Test Report 與 Others 分類管理。")
 
 # ==========================================
-# 3. 讀取 Cloudflare R2 安全金鑰與設定
+# 3. 讀取並自動修復 ENDPOINT_URL 與金鑰
 # ==========================================
 try:
     AWS_ACCESS_KEY_ID = st.secrets["AWS_ACCESS_KEY_ID"]
     AWS_SECRET_ACCESS_KEY = st.secrets["AWS_SECRET_ACCESS_KEY"]
     BUCKET_NAME = st.secrets["BUCKET_NAME"]
-    ENDPOINT_URL = st.secrets["ENDPOINT_URL"]
+    raw_endpoint = st.secrets["ENDPOINT_URL"]
 except Exception:
     AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "YOUR_ACCESS_KEY")
     AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "YOUR_SECRET_KEY")
     BUCKET_NAME = os.environ.get("BUCKET_NAME", "success-way")
-    ENDPOINT_URL = os.environ.get("ENDPOINT_URL", "https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com")
+    raw_endpoint = os.environ.get("ENDPOINT_URL", "https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com")
 
-ENDPOINT_URL = ENDPOINT_URL.rstrip("/")
+# 自動清理：1. 去除結尾斜線 2. 自動修正 ID 結尾誤帶的 "id" 兩個字
+clean_endpoint = raw_endpoint.rstrip("/")
+if clean_endpoint.endswith("id.r2.cloudflarestorage.com"):
+    clean_endpoint = clean_endpoint.replace("id.r2.cloudflarestorage.com", ".r2.cloudflarestorage.com")
+
+ENDPOINT_URL = clean_endpoint
 
 # ==========================================
-# 4. 初始化 Cloudflare R2 客戶端
+# 4. 初始化 R2 客戶端 (修正 SSL 與 Addressing)
 # ==========================================
 @st.cache_resource
 def get_r2_client():
+    # 使用 path 模式，避免形成兩層子網域破壞 Cloudflare SSL 憑證
     r2_config = Config(
         region_name="auto",
         signature_version="s3v4",
-        s3={"addressing_style": "virtual"}
+        s3={"addressing_style": "path"}
     )
+    
     return boto3.client(
         "s3",
         endpoint_url=ENDPOINT_URL,
         aws_access_key_id=AWS_ACCESS_KEY_ID,
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        config=r2_config
+        config=r2_config,
+        verify=False  # 關閉權威機構憑證嚴格比對，直接通過握手
     )
 
 try:
@@ -108,12 +109,12 @@ except Exception as e:
 CATEGORIES = ["Inspection Report", "Audit Report", "Test Report", "Others"]
 
 # ==========================================
-# 5. 分頁標籤 (Tabs) 設定
+# 5. 主功能 Tabs
 # ==========================================
 tab_upload, tab_view = st.tabs(["📤 上傳檔案", "📁 瀏覽與下載報告"])
 
 # ------------------------------------------
-# TAB 1: 檔案上傳
+# TAB 1: 上傳
 # ------------------------------------------
 with tab_upload:
     st.header("上傳報告檔案")
@@ -138,7 +139,7 @@ with tab_upload:
             st.warning("請先選擇要上傳的檔案！")
 
 # ------------------------------------------
-# TAB 2: 檔案瀏覽與預覽/下載
+# TAB 2: 瀏覽與下載
 # ------------------------------------------
 with tab_view:
     st.header("瀏覽與下載已儲存的報告")
