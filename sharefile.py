@@ -3,11 +3,24 @@ import streamlit as st
 import boto3
 
 # ==================== 雲端物件儲存 (S3 / R2) 設定 ====================
-AWS_ACCESS_KEY_ID = st.secrets["AWS_ACCESS_KEY_ID"]
-AWS_SECRET_ACCESS_KEY = st.secrets["AWS_SECRET_ACCESS_KEY"]
-AWS_REGION = "auto"
-BUCKET_NAME = st.secrets["BUCKET_NAME"]
-ENDPOINT_URL = st.secrets["ENDPOINT_URL"]
+import streamlit as st
+import boto3
+
+# 自動判斷是本地執行還是雲端執行
+try:
+    # 嘗試從 Streamlit Cloud 的 Secrets 讀取
+    AWS_ACCESS_KEY_ID = st.secrets["AWS_ACCESS_KEY_ID"]
+    AWS_SECRET_ACCESS_KEY = st.secrets["AWS_SECRET_ACCESS_KEY"]
+    BUCKET_NAME = st.secrets["BUCKET_NAME"]
+    ENDPOINT_URL = st.secrets["ENDPOINT_URL"]
+    AWS_REGION = "auto"
+except Exception:
+    # 如果在本地沒有設定 st.secrets，則直接寫死在這邊方便本地測試
+    AWS_ACCESS_KEY_ID = "93f1518eaabd36d90c660f68c15f17b3"
+    AWS_SECRET_ACCESS_KEY = "18001ef32838fc1dc5b7d9a53e80c35d1fae03d590fe3eb188ea8a59fafaf5f4"
+    BUCKET_NAME = "success-way"
+    ENDPOINT_URL = "https://0fc5d82eb0dcef6539298f2c3221edea.r2.cloudflarestorage.com"
+    AWS_REGION = "auto"
 
 # 初始化 S3 / R2 Client
 @st.cache_resource
