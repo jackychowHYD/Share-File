@@ -49,7 +49,7 @@ def check_authentication():
         return True
 
     # 登入介面 / Login UI
-    st.markdown("## 🔒 系統防護：請登入帳號 / System Access: Please Login")
+    st.markdown("## Success Way Industrial : 請登入帳號 / System Access: Please Login")
     col1, col2 = st.columns([1, 2])
     with col1:
         st.text_input("帳號 / Username", key="login_user")
